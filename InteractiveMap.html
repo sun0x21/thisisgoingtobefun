@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Last War Map – Phase 7</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+    }
+    .map-wrapper {
+      position: relative;
+      margin: 10px;
+    }
+    .map-container {
+      display: grid;
+      grid-template-columns: repeat(94, 20px);
+      grid-template-rows: repeat(82, 20px);
+      gap: 1px;
+      background: #333;
+      width: max-content;
+    }
+    .tile {
+      width: 20px;
+      height: 20px;
+      background: #eee;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      font-size: 10px;
+      box-sizing: border-box;
+    }
+    .terrain {
+      background-color: red;
+    }
+    .tile .label {
+      position: absolute;
+      font-weight: bold;
+      color: white;
+      pointer-events: none;
+    }
+    .preview {
+      outline: 1px dashed orange;
+    }
+    .sidebar {
+      margin: auto 0 auto 30px;
+      padding: 20px;
+      background: #f4f4f4;
+      border-left: 2px solid #ccc;
+      height: fit-content;
+    }
+    .sidebar h2 {
+      margin-top: 0;
+    }
+    .player {
+      background-color: blue !important;
+    }
+    .hit {
+      background-color: darkred !important;
+    }
+    .missile-zone {
+      border: 1px solid red;
+    }
+    .ac {
+      background-color: azure !important;
+    }
+    .ac .label {
+      color: black !important;
+    }
+    .mode-indicator {
+      font-weight: bold;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="map-wrapper">
+    <div class="map-container" id="map"></div>
+  </div>
+  <div class="sidebar">
+    <h2>Controls</h2>
+    <p>Players placed: <span id="playerCount">0</span></p>
+    <p>Players hit: <span id="hitCount">0</span></p>
+    <button onclick="undoLastPlayer()">Undo Last Player</button><br><br>
+    <button onclick="toggleMissileMode()">Toggle Missile Mode</button><br>
+    <div class="mode-indicator" id="modeIndicator">Mode: Player</div><br>
+    <button onclick="undoLastMissile()">Undo Last Missile</button><br><br>
+    <button onclick="toggleACMode()">Toggle AC Mode</button><br><br>
+    <button onclick="toggleNameMode()">Toggle Name Player Mode</button><br><br>
+    <h3>Import/Export</h3>
+    <button onclick="exportData('json')">Export JSON</button>
+    <button onclick="exportData('csv')">Export CSV</button><br><br>
+    <input type="file" onchange="importData(event)" />
+  </div>
+
+  <script>
+    const map = document.getElementById("map");
+    const playerCountDisplay = document.getElementById("playerCount");
+    const hitCountDisplay = document.getElementById("hitCount");
+    const modeIndicator = document.getElementById("modeIndicator");
+    let players = [];
+    let missiles = [];
+    let acBlocks = [];
+    let missileMode = false;
+    let acMode = false;
+    let nameMode = false;
+
+    for (let y = 905; y >= 824; y--) {
+      for (let x = 906; x <= 999; x++) {
+        const tile = document.createElement("div");
+        tile.classList.add("tile");
+        tile.id = `X${x}_Y${y}`;
+
+        const label = document.createElement("span");
+        label.classList.add("label");
+
+        if (x >= 972 && x <= 988 && y <= 866 && y >= 848) {
+          tile.classList.add("terrain");
+          label.textContent = "T";
+        }
+
+        tile.appendChild(label);
+        tile.addEventListener("click", () => handleTileClick(x, y));
+        tile.addEventListener("mouseenter", () => showPreview(x, y));
+        tile.addEventListener("mouseleave", clearPreview);
+        map.appendChild(tile);
+      }
+    }
+
+    function handleTileClick(cx, cy) {
+      const centerId = `X${cx}_Y${cy}`;
+      const centerTile = document.getElementById(centerId);
+
+      if (nameMode) {
+        const player = players.find(p => p.center === centerId);
+        if (player) {
+          const name = prompt("Enter player name:", player.name || "");
+          if (name !== null) {
+            player.name = name;
+            const label = centerTile.querySelector(".label");
+            if (label) label.textContent = name;
+          }
+        }
+        return;
+      }
+
+      if (missileMode) {
+        placeMissile(cx, cy);
+        return;
+      }
+      if (acMode) {
+        placeAC(cx, cy);
+        return;
+      }
+
+      if (centerTile.classList.contains("player")) {
+        removePlayer(cx, cy);
+        return;
+      }
+
+      const placed = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          const tile = document.getElementById(`X${tx}_Y${ty}`);
+          if (tile) {
+            tile.classList.add("player");
+            placed.push(tile);
+          }
+        }
+      }
+      const label = centerTile.querySelector(".label");
+      if (label.textContent === '') label.textContent = "P";
+      players.push({ center: centerId, tiles: placed, name: "" });
+      updatePlayerCount();
+    }
+
+    function exportData(format = 'json') {
+      const data = players.map(p => {
+        return {
+          center: p.center,
+          name: p.name || '',
+          hit: p.tiles.some(t => t.classList.contains('hit'))
+        };
+      });
+
+      if (format === 'json') {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'lastwar_players.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (format === 'csv') {
+        const csv = ["center,name,hit"].concat(
+          data.map(p => `${p.center},"${p.name}",${p.hit}`)
+        ).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'lastwar_players.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    function importData(evt) {
+      const file = evt.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const content = e.target.result;
+        let parsed;
+        if (file.name.endsWith('.json')) {
+          parsed = JSON.parse(content);
+        } else if (file.name.endsWith('.csv')) {
+          const lines = content.trim().split("\n").slice(1);
+          parsed = lines.map(line => {
+            const [center, name, hit] = line.split(',');
+            return { center, name: name.replace(/"/g, ''), hit: hit === 'true' };
+          });
+        }
+        restorePlayers(parsed);
+      };
+      reader.readAsText(file);
+    }
+
+    function restorePlayers(playerList) {
+      players.forEach(p => p.tiles.forEach(t => {
+        t.classList.remove("player", "hit");
+        t.querySelector(".label").textContent = "";
+      }));
+      players = [];
+
+      playerList.forEach(({ center, name, hit }) => {
+        const [x, y] = center.replace('X', '').split('_Y').map(Number);
+        const placed = [];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const tx = x + dx;
+            const ty = y + dy;
+            const tile = document.getElementById(`X${tx}_Y${ty}`);
+            if (tile) {
+              tile.classList.add("player");
+              if (hit) tile.classList.add("hit");
+              placed.push(tile);
+            }
+          }
+        }
+        const label = document.getElementById(center)?.querySelector(".label");
+        if (label) label.textContent = name || "P";
+        players.push({ center, tiles: placed, name });
+      });
+
+      updatePlayerCount();
+      updateHitCount();
+    }
+
+    function placeAC(cx, cy) {
+      const placed = [];
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          const tile = document.getElementById(`X${tx}_Y${ty}`);
+          if (tile) {
+            tile.classList.add("ac");
+            const label = tile.querySelector(".label");
+            if (label) label.textContent = "AC";
+            placed.push(tile);
+          }
+        }
+      }
+      acBlocks.push({ center: `X${cx}_Y${cy}`, tiles: placed });
+    }
+
+    function showPreview(cx, cy) {
+      clearPreview();
+      let size = 1;
+      if (missileMode) size = 18;
+      else if (acMode) size = 4;
+
+      for (let dy = -size; dy <= size; dy++) {
+        for (let dx = -size; dx <= size; dx++) {
+          const tile = document.getElementById(`X${cx + dx}_Y${cy + dy}`);
+          if (tile) tile.classList.add("preview");
+        }
+      }
+    }
+
+    function clearPreview() {
+      document.querySelectorAll(".preview").forEach(tile => tile.classList.remove("preview"));
+    }
+
+    function removePlayer(cx, cy) {
+      const centerId = `X${cx}_Y${cy}`;
+      const index = players.findIndex(p => p.center === centerId);
+      if (index > -1) {
+        const player = players[index];
+        player.tiles.forEach(tile => {
+          tile.classList.remove("player", "hit");
+          const label = tile.querySelector(".label");
+          if (label) label.textContent = "";
+        });
+        players.splice(index, 1);
+        updatePlayerCount();
+        updateHitCount();
+      }
+    }
+
+    function undoLastPlayer() {
+      const last = players.pop();
+      if (last) {
+        last.tiles.forEach(tile => {
+          tile.classList.remove("player", "hit");
+          const label = tile.querySelector(".label");
+          if (label) label.textContent = "";
+        });
+        updatePlayerCount();
+        updateHitCount();
+      }
+    }
+
+    function toggleMissileMode() {
+      missileMode = !missileMode;
+      acMode = false;
+      nameMode = false;
+      modeIndicator.textContent = missileMode ? "Mode: Missile" : "Mode: Player";
+    }
+
+    function toggleACMode() {
+      acMode = !acMode;
+      missileMode = false;
+      nameMode = false;
+      modeIndicator.textContent = acMode ? "Mode: AC" : "Mode: Player";
+    }
+
+    function toggleNameMode() {
+      nameMode = !nameMode;
+      missileMode = false;
+      acMode = false;
+      modeIndicator.textContent = nameMode ? "Mode: Name Player" : "Mode: Player";
+    }
+
+    function placeMissile(cx, cy) {
+      const range = 18;
+      const affectedTiles = new Set();
+      const zoneTiles = [];
+
+      for (let y = cy - range; y <= cy + range; y++) {
+        for (let x = cx - range; x <= cx + range; x++) {
+          const tile = document.getElementById(`X${x}_Y${y}`);
+          if (tile) {
+            tile.classList.add("missile-zone");
+            zoneTiles.push(tile);
+            if (tile.classList.contains("player") && !tile.classList.contains("terrain")) {
+              tile.classList.add("hit");
+              affectedTiles.add(tile);
+            }
+          }
+        }
+      }
+
+      missiles.push({ center: `X${cx}_Y${cy}`, zoneTiles, affectedTiles: [...affectedTiles] });
+      updateHitCount();
+    }
+
+    function undoLastMissile() {
+      const last = missiles.pop();
+      if (last) {
+        last.zoneTiles.forEach(tile => tile.classList.remove("missile-zone"));
+        last.affectedTiles.forEach(tile => tile.classList.remove("hit"));
+        updateHitCount();
+      }
+    }
+
+    function updatePlayerCount() {
+      playerCountDisplay.textContent = players.length;
+    }
+
+    function updateHitCount() {
+      const hitCenters = new Set();
+      players.forEach(p => {
+        if (p.tiles.some(tile => tile.classList.contains("hit"))) {
+          hitCenters.add(p.center);
+        }
+      });
+      hitCountDisplay.textContent = hitCenters.size;
+    }
+  </script>
+</body>
+</html>
