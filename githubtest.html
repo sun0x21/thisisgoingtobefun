@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Last War Tactical Planner – Phase 0–4.1</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f0f0f0;
+      display: flex;
+    }
+    .sidebar {
+      width: 200px;
+      padding: 20px;
+      background: #1e1e1e;
+      color: white;
+      height: 100vh;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 2px 0 10px rgba(0,0,0,0.2);
+    }
+    .sidebar button {
+      width: 100%;
+      padding: 10px;
+      font-size: 15px;
+      background: #333;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .sidebar button:hover {
+      background: #555;
+    }
+    .sidebar button.active {
+      background: #ff9800;
+    }
+    #inputSection {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      width: 280px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      position: fixed;
+      top: 20px;
+      left: 220px;
+      z-index: 100;
+    }
+    input {
+      width: 100%;
+      padding: 8px;
+      margin-top: 10px;
+      margin-bottom: 20px;
+      font-size: 16px;
+    }
+    #status {
+      font-weight: bold;
+    }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(94, 20px);
+      grid-template-rows: repeat(82, 20px);
+      width: max-content;
+      margin: 20px;
+    }
+    .tile {
+      width: 20px;
+      height: 20px;
+      border: 1px solid #ccc;
+      font-size: 8px;
+      text-align: center;
+      line-height: 20px;
+      box-sizing: border-box;
+      background: white;
+      position: relative;
+    }
+    .tile.terrain { background: #C33; }
+    .tile.player { background: #3399ff; }
+    .tile.missile { background: orange; }
+    
+.tile .player-name {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  font-size: 10px;
+  font-weight: bold;
+  color: black;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.tile.ac { background: #00bcd4; color: white; font-weight: bold; }
+.tile:hover::after {
+      content: attr(data-coordinate);
+      position: absolute;
+      background: #333;
+      color: #fff;
+      padding: 2px 4px;
+      font-size: 10px;
+      top: -25px;
+      left: 0;
+      white-space: nowrap;
+      z-index: 10;
+    }
+  
+    .hover-player { background-color: rgba(0, 0, 255, 0.3) !important; }
+    .hover-ac { background-color: rgba(0, 255, 0, 0.3) !important; }
+    .hover-missile { background-color: rgba(255, 165, 0, 0.3) !important; }
+
+</style>
+</head>
+<body>
+<div class="sidebar" id="sidebar">
+  <button onclick="setMode('terrain')">Terrain (1)</button>
+  <button onclick="setMode('player')">Player HQ (2)</button>
+  <button onclick="setMode('name')">Name Player (3)</button>
+  <button onclick="setMode('missile')">Missile (4)</button>
+  <button onclick="setMode('ac')">Alliance Center (5)</button>
+  <button onclick="toggleInputPanel()">Change Starting Coordinate</button>
+  <button onclick="exportCSV()">Export CSV</button>
+  <button onclick="importCSV()">Import Names CSV</button>
+  <input type="file" id="importFile" accept=".csv" style="display:none" />
+</div>
+<div id="inputSection">
+  <label for="coordinateInput">Enter starting map coordinate (e.g., X994 Y857):</label>
+  <input type="text" id="coordinateInput" placeholder="X000 Y000" />
+  <button onclick="saveStartingCoordinate()">Save Starting Coordinate</button>
+  <div id="status"></div>
+</div>
+<div id="grid"></div>
+<script>
+let mode = 'terrain';
+let missileCenters = new Set();
+
+function setMode(newMode) {
+  mode = newMode;
+  const buttons = document.querySelectorAll(".sidebar button");
+  buttons.forEach(btn => btn.classList.remove("active"));
+  const label = {
+    terrain: "Terrain (1)",
+    player: "Player HQ (2)",
+    name: "Name Player (3)",
+    missile: "Missile (4)",
+    ac: "Alliance Center (5)"
+  }[mode];
+  buttons.forEach(btn => {
+    if (btn.textContent === label) btn.classList.add("active");
+  });
+}
+function saveStartingCoordinate() {
+  const input = document.getElementById("coordinateInput").value.trim().toUpperCase();
+  const match = input.match(/^X(\d{1,4})\s+Y(\d{1,4})$/);
+  const status = document.getElementById("status");
+  if (match) {
+    const x = parseInt(match[1], 10);
+    const y = parseInt(match[2], 10);
+    const coordinate = { x, y };
+    localStorage.setItem("startingCoordinate", JSON.stringify(coordinate));
+    status.textContent = `✅ Coordinate saved: X${x} Y${y}`;
+    renderGrid();
+    hideInputPanel();
+  } else {
+    status.textContent = "❌ Invalid format. Use: X### Y###";
+  }
+}
+function renderGrid() {
+  const saved = localStorage.getItem("startingCoordinate");
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  if (!saved) return;
+  const { x: startX, y: startY } = JSON.parse(saved);
+  for (let row = 0; row < 82; row++) {
+    for (let col = 0; col < 94; col++) {
+      const tile = document.createElement("div");
+      tile.className = "tile";
+      const coordX = startX + col;
+      const coordY = startY + (81 - row);
+      const label = `X${coordX} Y${coordY}`;
+      tile.setAttribute("data-coordinate", label);
+      tile.title = label;
+
+      tile.addEventListener("click", (e) => {
+        
+  if (mode === 'ac') {
+    if (e.shiftKey) removeAC(tile);
+    else placeAC(tile);
+    return;
+  }
+
+  if (mode === 'name') {
+    promptPlayerName(tile);
+    return;
+  }
+if (mode === 'missile') {
+          if (e.shiftKey) removeMissile(tile);
+          else placeMissile(tile);
+          return;
+        }
+        if (mode === 'terrain') {
+          if (e.shiftKey) tile.classList.remove("terrain");
+          else tile.classList.toggle("terrain");
+        } else if (mode === 'player') {
+          if (e.shiftKey) {
+            const classes = tile.className.split(" ");
+            const group = classes.find(c => c.startsWith("player-"));
+            if (group) {
+              document.querySelectorAll("." + group).forEach(t => t.classList.remove("player", group));
+            }
+          } else {
+            placePlayer(tile);
+          }
+        }
+      });
+
+      
+tile.addEventListener("mouseenter", (e) => {
+  if (isPainting && mode === "terrain" && !e.shiftKey) {
+    tile.classList.add("terrain");
+  }
+});
+
+        grid.appendChild(tile);
+      tile.addEventListener("mouseenter", () => {
+        clearHoverHighlights();
+        const coord = tile.getAttribute("data-coordinate");
+        const [xStr, yStr] = coord.split(" ");
+        const x = parseInt(xStr.slice(1));
+        const y = parseInt(yStr.slice(1));
+
+        if (mode === "player") {
+          document.querySelectorAll(".tile").forEach(t => {
+            const [tx, ty] = t.getAttribute("data-coordinate").split(" ");
+            const tileX = parseInt(tx.slice(1));
+            const tileY = parseInt(ty.slice(1));
+            if (tileX >= x - 1 && tileX <= x + 1 && tileY >= y - 1 && tileY <= y + 1) {
+              t.classList.add("hover-player");
+            }
+          });
+        }
+
+        if (mode === "ac") {
+          document.querySelectorAll(".tile").forEach(t => {
+            const [tx, ty] = t.getAttribute("data-coordinate").split(" ");
+            const tileX = parseInt(tx.slice(1));
+            const tileY = parseInt(ty.slice(1));
+            if (tileX >= x - 4 && tileX <= x + 4 && tileY >= y - 4 && tileY <= y + 4) {
+              t.classList.add("hover-ac");
+            }
+          });
+        }
+
+        if (mode === "missile") {
+          const minX = x - 18;
+          const maxX = x + 17;
+          const minY = y - 18;
+          const maxY = y + 17;
+          document.querySelectorAll(".tile").forEach(t => {
+            const [tx, ty] = t.getAttribute("data-coordinate").split(" ");
+            const tileX = parseInt(tx.slice(1));
+            const tileY = parseInt(ty.slice(1));
+            const onEdge = (
+              (tileX === minX || tileX === maxX || tileY === minY || tileY === maxY) &&
+              tileX >= minX && tileX <= maxX && tileY >= minY && tileY <= maxY
+            );
+            if (onEdge) {
+              t.classList.add("hover-missile");
+            }
+          });
+        }
+      });
+
+      tile.addEventListener("mouseleave", clearHoverHighlights);
+tile.addEventListener("mouseleave", clearHoverHighlights);
+
+    }
+  }
+}
+function placePlayer(centerTile) {
+  const coord = centerTile.getAttribute("data-coordinate");
+  const [xLabel, yLabel] = coord.split(" ");
+  const centerX = parseInt(xLabel.slice(1));
+  const centerY = parseInt(yLabel.slice(1));
+  const groupId = 'player-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+  document.querySelectorAll(".tile").forEach(tile => {
+    const [tx, ty] = tile.getAttribute("data-coordinate").split(" ");
+    const tileX = parseInt(tx.slice(1));
+    const tileY = parseInt(ty.slice(1));
+    if (tileX >= centerX - 1 && tileX <= centerX + 1 &&
+        tileY >= centerY - 1 && tileY <= centerY + 1) {
+      tile.classList.add("player");
+      tile.classList.add(groupId);
+    }
+  });
+}
+
+function placeMissile(centerTile) {
+  const coord = centerTile.getAttribute("data-coordinate");
+  if (missileCenters.has(coord)) return;
+  missileCenters.add(coord);
+
+  const [xLabel, yLabel] = coord.split(" ");
+  const centerX = parseInt(xLabel.slice(1));
+  const centerY = parseInt(yLabel.slice(1));
+  const tag = "missile-" + coord.replace(" ", "-");
+
+  const minX = centerX - 18;
+  const maxX = centerX + 17;
+  const minY = centerY - 18;
+  const maxY = centerY + 17;
+
+  document.querySelectorAll(".tile").forEach(tile => {
+    const [tx, ty] = tile.getAttribute("data-coordinate").split(" ");
+    const tileX = parseInt(tx.slice(1));
+    const tileY = parseInt(ty.slice(1));
+
+    const onEdge = (
+      (tileX === minX || tileX === maxX || tileY === minY || tileY === maxY) &&
+      tileX >= minX && tileX <= maxX && tileY >= minY && tileY <= maxY
+    );
+
+    if (onEdge) {
+      tile.classList.add("missile", tag);
+    }
+  });
+}
+
+function removeMissile(clickedTile) {
+  const classes = clickedTile.className.split(" ");
+  const missileTag = classes.find(c => c.startsWith("missile-"));
+  if (!missileTag) return;
+  const coord = missileTag.replace("missile-", "").replace("-", " ");
+  missileCenters.delete(coord);
+  document.querySelectorAll("." + missileTag).forEach(tile => tile.classList.remove("missile", missileTag));
+}
+function toggleInputPanel() {
+  const panel = document.getElementById("inputSection");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+}
+function hideInputPanel() {
+  document.getElementById("inputSection").style.display = "none";
+}
+document.addEventListener("keydown", e => {
+  if (e.key === "1") setMode("terrain");
+  if (e.key === "2") setMode("player");
+  if (e.key === "3") setMode("name");
+  if (e.key === "4") setMode("missile");
+  if (e.key === "5") setMode("ac");
+});
+window.onload = () => {
+  const saved = localStorage.getItem("startingCoordinate");
+  if (saved) {
+    try {
+      const { x, y } = JSON.parse(saved);
+      document.getElementById("coordinateInput").value = `X${x} Y${y}`;
+      document.getElementById("status").textContent = `✅ Loaded saved starting coordinate: X${x} Y${y}`;
+      renderGrid();
+      hideInputPanel();
+    } catch (e) {
+      document.getElementById("status").textContent = "❌ Error loading saved coordinate.";
+    }
+  }
+};
+
+let isPainting = false;
+document.addEventListener("mousedown", e => {
+  if (mode === "terrain") isPainting = true;
+});
+document.addEventListener("mouseup", () => {
+  isPainting = false;
+});
+
+
+let acPlaced = false;
+
+function placeAC(centerTile) {
+  if (acPlaced) return;
+
+  const coord = centerTile.getAttribute("data-coordinate");
+  const [xLabel, yLabel] = coord.split(" ");
+  const centerX = parseInt(xLabel.slice(1));
+  const centerY = parseInt(yLabel.slice(1));
+  const tag = "ac";
+
+  document.querySelectorAll(".tile").forEach(tile => {
+    const [tx, ty] = tile.getAttribute("data-coordinate").split(" ");
+    const tileX = parseInt(tx.slice(1));
+    const tileY = parseInt(ty.slice(1));
+    if (tileX >= centerX - 4 && tileX <= centerX + 4 &&
+        tileY >= centerY - 4 && tileY <= centerY + 4) {
+      tile.classList.add("ac");
+    }
+    if (tileX === centerX && tileY === centerY) {
+      tile.innerHTML = "<b>AC</b>";
+    }
+  });
+
+  acPlaced = true;
+}
+
+function removeAC(clickedTile) {
+  if (!clickedTile.classList.contains("ac")) return;
+  document.querySelectorAll(".ac").forEach(tile => {
+    tile.classList.remove("ac");
+    tile.innerHTML = "";
+  });
+  acPlaced = false;
+}
+
+
+const playerNames = {};
+
+
+async function promptPlayerName(clickedTile) {
+  if (!clickedTile.classList.contains("player")) return;
+
+  const clickedCoord = clickedTile.getAttribute("data-coordinate");
+  const [xLabel, yLabel] = clickedCoord.split(" ");
+  const clickedX = parseInt(xLabel.slice(1));
+  const clickedY = parseInt(yLabel.slice(1));
+
+  const groupClass = Array.from(clickedTile.classList).find(c => c.startsWith("player-"));
+  if (!groupClass) return;
+
+  const groupTiles = Array.from(document.querySelectorAll(".tile." + groupClass));
+  if (groupTiles.length !== 9) return;
+
+  const coords = groupTiles.map(t => {
+    const [x, y] = t.getAttribute("data-coordinate").split(" ");
+    return {
+      x: parseInt(x.slice(1)),
+      y: parseInt(y.slice(1)),
+      tile: t
+    };
+  });
+
+  const centerX = Math.round(coords.reduce((sum, c) => sum + c.x, 0) / 9);
+  const centerY = Math.round(coords.reduce((sum, c) => sum + c.y, 0) / 9);
+  const centerCoord = `X${centerX} Y${centerY}`;
+
+  const currentName = playerNames[centerCoord] || "";
+  const name = prompt("Enter player name:", currentName);
+  if (name !== null) {
+    playerNames[centerCoord] = name;
+
+    coords.forEach(({ x, y, tile }) => {
+      const existing = tile.querySelector('.player-name');
+      if (existing) existing.remove();
+      if (x === centerX && y === centerY) {
+        const label = document.createElement('div');
+        label.className = 'player-name';
+        label.textContent = name;
+        tile.appendChild(label);
+      }
+    });
+  }
+}
+
+
+
+function proEnabled() {
+  return true; // 🔐 Replace with real Pro check or obfuscate later
+}
+
+function exportCSV() {
+  if (!proEnabled()) {
+    alert("🔒 This feature is available for Pro users only.");
+    return;
+  }
+
+  const rows = [["Name", "Coordinate"]];
+
+  // Export Player Names
+  for (const [coord, name] of Object.entries(playerNames)) {
+    rows.push([name, coord]);
+  }
+
+  // Export Alliance Center
+  const grid = document.getElementById("grid");
+  const acTile = Array.from(grid.querySelectorAll(".tile")).find(tile => tile.innerHTML.includes("AC"));
+  if (acTile) {
+    const acCoord = acTile.getAttribute("data-coordinate");
+    rows.push(["AC", acCoord]);
+  }
+
+  const csvContent = rows.map(row => row.join(",")).join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "lastwar_export.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+let availableNames = [];
+
+function importCSV() {
+  if (!proEnabled()) {
+    alert("🔒 This feature is available for Pro users only.");
+    return;
+  }
+
+  document.getElementById("importFile").click();
+}
+
+document.getElementById("importFile").addEventListener("change", function(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const lines = e.target.result.split(/\r?\n/).map(line => line.trim()).filter(line => line);
+    availableNames = lines;
+    alert(`✅ Imported ${availableNames.length} names`);
+  };
+  reader.readAsText(file);
+});
+
+async function promptPlayerName(clickedTile) {
+  if (!clickedTile.classList.contains("player")) return;
+
+  const clickedCoord = clickedTile.getAttribute("data-coordinate");
+  const [xLabel, yLabel] = clickedCoord.split(" ");
+  const clickedX = parseInt(xLabel.slice(1));
+  const clickedY = parseInt(yLabel.slice(1));
+
+  const groupClass = Array.from(clickedTile.classList).find(c => c.startsWith("player-"));
+  if (!groupClass) return;
+
+  const groupTiles = Array.from(document.querySelectorAll(".tile." + groupClass));
+  if (groupTiles.length !== 9) return;
+
+  const coords = groupTiles.map(t => {
+    const [x, y] = t.getAttribute("data-coordinate").split(" ");
+    return {
+      x: parseInt(x.slice(1)),
+      y: parseInt(y.slice(1)),
+      tile: t
+    };
+  });
+
+  const centerX = Math.round(coords.reduce((sum, c) => sum + c.x, 0) / 9);
+  const centerY = Math.round(coords.reduce((sum, c) => sum + c.y, 0) / 9);
+  const centerCoord = `X${centerX} Y${centerY}`;
+
+  // If names loaded, show dropdown
+  if (availableNames.length > 0) {
+    const name = await promptDropdown(availableNames);
+    if (name) {
+      playerNames[centerCoord] = name;
+      availableNames = availableNames.filter(n => n !== name);
+
+      coords.forEach(({ x, y, tile }) => {
+        const existing = tile.querySelector('.player-name');
+        if (existing) existing.remove();
+        if (x === centerX && y === centerY) {
+          const label = document.createElement('div');
+          label.className = 'player-name';
+          label.textContent = name;
+          tile.appendChild(label);
+        }
+      });
+    }
+  } else {
+    // Fallback to prompt
+    const currentName = playerNames[centerCoord] || "";
+    const name = prompt("Enter player name:", currentName);
+    if (name !== null) {
+      playerNames[centerCoord] = name;
+
+      coords.forEach(({ x, y, tile }) => {
+        const existing = tile.querySelector('.player-name');
+        if (existing) existing.remove();
+        if (x === centerX && y === centerY) {
+          const label = document.createElement('div');
+          label.className = 'player-name';
+          label.textContent = name;
+          tile.appendChild(label);
+        }
+      });
+    }
+  }
+}
+
+function promptDropdown(options) {
+  const dropdown = document.createElement("select");
+  dropdown.innerHTML = "<option value='' disabled selected>Select a name</option>" + options.map(name => `<option value='${name}'>${name}</option>`).join("");
+
+  const wrapper = document.createElement("div");
+  wrapper.style.position = "fixed";
+  wrapper.style.top = "50%";
+  wrapper.style.left = "50%";
+  wrapper.style.transform = "translate(-50%, -50%)";
+  wrapper.style.background = "white";
+  wrapper.style.padding = "20px";
+  wrapper.style.border = "1px solid #ccc";
+  wrapper.style.borderRadius = "8px";
+  wrapper.style.zIndex = "1000";
+
+  const button = document.createElement("button");
+  button.textContent = "Assign";
+  button.style.marginTop = "10px";
+
+  let selected = null;
+  dropdown.addEventListener("change", () => {
+    selected = dropdown.value;
+  });
+
+  return new Promise(resolve => {
+    button.onclick = () => {
+      document.body.removeChild(wrapper);
+      resolve(selected);
+    };
+    wrapper.appendChild(dropdown);
+    wrapper.appendChild(button);
+    document.body.appendChild(wrapper);
+  });
+}
+
+
+function clearHoverHighlights() {
+  document.querySelectorAll(".hover-player, .hover-ac, .hover-missile").forEach(t => {
+    t.classList.remove("hover-player", "hover-ac", "hover-missile");
+  });
+}
+
+</script>
+</body>
+</html>
